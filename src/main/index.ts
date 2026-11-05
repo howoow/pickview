@@ -1,7 +1,9 @@
-import { stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { spawn } from 'node:child_process'
+import { readdir, stat } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { clearImageIndex, indexImages, installImageProtocol, registerPickviewScheme } from './image-protocol'
+import { checkForUpdates, openReleasesPage, openUpdateDownload } from './updates'
 import { scanWorkspace } from './workspace'
 
 registerPickviewScheme()
@@ -37,7 +39,8 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       additionalArguments: [
-        `--pickview-workspace=${initialWorkspace}`
+        `--pickview-workspace=${initialWorkspace}`,
+        `--pickview-version=${app.getVersion()}`
       ]
     }
   })
@@ -61,6 +64,7 @@ function createWindow(): void {
 
 function installMenu(): void {
   const sendChooseFolder = (): void => mainWindow?.webContents.send('menu:choose-folder')
+  const sendCheckUpdates = (): void => mainWindow?.webContents.send('menu:check-updates')
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin'
       ? [
@@ -68,6 +72,7 @@ function installMenu(): void {
             label: app.name,
             submenu: [
               { role: 'about' as const },
+              { label: '检查更新…', click: sendCheckUpdates },
               { type: 'separator' as const },
               { role: 'hide' as const },
               { role: 'hideOthers' as const },
@@ -107,7 +112,20 @@ function installMenu(): void {
         { role: 'togglefullscreen' }
       ]
     },
-    { role: 'windowMenu' }
+    { role: 'windowMenu' },
+    ...(process.platform === 'darwin'
+      ? []
+      : [
+          {
+            label: '帮助',
+            submenu: [
+              { label: '检查更新…', click: sendCheckUpdates },
+              { label: 'GitHub 发布页', click: () => void openReleasesPage() },
+              { type: 'separator' as const },
+              { role: 'about' as const }
+            ]
+          }
+        ])
   ]
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
@@ -157,5 +175,60 @@ ipcMain.handle('shell:reveal', async (_event, path: unknown) => {
   if (typeof path !== 'string') return
   shell.showItemInFolder(path)
 })
+
+ipcMain.handle('app:uninstall', async () => {
+  if (process.platform !== 'win32') throw new Error('仅 Windows 支持应用内卸载')
+  if (!mainWindow) return
+
+  const installDirectory = dirname(app.getPath('exe'))
+  let uninstallerPath: string | null = null
+  const preferred = join(installDirectory, `Uninstall ${app.getName()}.exe`)
+  if ((await stat(preferred).catch(() => null))?.isFile()) {
+    uninstallerPath = preferred
+  } else {
+    const entries = await readdir(installDirectory).catch(() => [])
+    const candidate = entries.find((name) => /^uninstall.*\.exe$/i.test(name))
+    if (candidate) uninstallerPath = join(installDirectory, candidate)
+  }
+
+  if (!uninstallerPath) {
+    await dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: '卸载捡影',
+      message: '没有找到应用内卸载程序',
+      detail: '已为你打开 Windows 的“应用和功能”，请在那里卸载捡影。',
+      buttons: ['好'],
+      noLink: true
+    })
+    await shell.openExternal('ms-settings:appsfeatures')
+    return
+  }
+
+  const confirmation = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    title: '卸载捡影',
+    message: '确定要卸载捡影吗？',
+    detail: '将启动 Windows 卸载程序，应用会退出。缩略图缓存、最近工作区与界面设置会一并删除。',
+    buttons: ['取消', '卸载'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  })
+  if (confirmation.response !== 1) return
+
+  spawn(uninstallerPath, [], { detached: true, stdio: 'ignore' }).unref()
+  setTimeout(() => app.quit(), 300)
+})
+
+ipcMain.handle('updates:check', async (_event, automatic: unknown) =>
+  checkForUpdates(automatic === true)
+)
+
+ipcMain.handle('updates:open-download', async (_event, url: unknown) => {
+  if (typeof url !== 'string' || !url) throw new Error('无效的下载地址')
+  await openUpdateDownload(url)
+})
+
+ipcMain.handle('updates:open-releases', async () => openReleasesPage())
 
 ipcMain.on('workspace:clear', () => clearImageIndex())

@@ -55,10 +55,7 @@ jobs:
           retention-days: 7
           path: |
             release/*.dmg
-            release/*.zip
             release/*.exe
-            release/*.blockmap
-            release/latest*.yml
 
   release:
     name: Publish GitHub Release

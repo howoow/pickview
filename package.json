@@ -17,13 +17,6 @@
     "build:mac": "npm run build && electron-builder --mac --publish never",
     "build:win": "npm run build && electron-builder --win --publish never"
   },
-  "dependencies": {
-    "image-size": "^2.0.4",
-    "lucide-react": "^0.545.0",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "sharp": "^0.35.5"
-  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
@@ -32,6 +25,10 @@
     "electron": "^45.2.3",
     "electron-builder": "^26.18.0",
     "electron-vite": "^6.0.0",
+    "image-size": "^2.0.4",
+    "lucide-react": "^0.545.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "typescript": "^5.9.2",
     "vite": "^8.3.6"
   },
@@ -42,20 +39,23 @@
     "directories": {
       "output": "release"
     },
+    "asar": true,
+    "compression": "maximum",
+    "electronLanguages": [
+      "en-US",
+      "zh-CN"
+    ],
     "files": [
       "out/**/*",
-      "package.json"
+      "package.json",
+      "!**/*.map"
     ],
-    "asarUnpack": [
-      "node_modules/sharp/**/*",
-      "node_modules/@img/**/*"
-    ],
+    "npmRebuild": false,
     "mac": {
       "category": "public.app-category.photography",
       "icon": "resources/icon.icns",
       "target": [
-        "dmg",
-        "zip"
+        "dmg"
       ]
     },
     "win": {
@@ -65,7 +65,9 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": true
     }
   }
 }

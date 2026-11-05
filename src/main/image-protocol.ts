@@ -4,8 +4,7 @@ import { createReadStream, promises as fs } from 'node:fs'
 import { extname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { promisify } from 'node:util'
-import { app, net, protocol } from 'electron'
-import sharp from 'sharp'
+import { app, nativeImage, protocol } from 'electron'
 import type { ImageRecord } from '../shared/types'
 
 interface IndexedImage {
@@ -61,18 +60,43 @@ async function readCached(path: string, type: string): Promise<Response | null> 
   }
 }
 
-async function renderThumbnailWithSharp(image: IndexedImage, path: string, width: number): Promise<void> {
+function nativeImageSource(imagePath: string, maxDimension: number): Promise<Electron.NativeImage> {
+  return nativeImage
+    .createThumbnailFromPath(imagePath, { width: maxDimension, height: maxDimension })
+    .catch(() => nativeImage.createEmpty())
+    .then((thumbnail) => {
+      if (!thumbnail.isEmpty()) return thumbnail
+      const direct = nativeImage.createFromPath(imagePath)
+      if (!direct.isEmpty()) return direct
+      throw new Error('系统无法解码这张图片')
+    })
+}
+
+async function writeNativeImage(
+  image: Electron.NativeImage,
+  path: string,
+  format: 'jpeg' | 'png',
+  width?: number
+): Promise<void> {
+  const resized = width && image.getSize().width > width ? image.resize({ width, quality: 'good' }) : image
+  const data = format === 'jpeg' ? resized.toJPEG(86) : resized.toPNG()
+  if (!data.length) throw new Error('图片解码结果为空')
   const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`
   try {
-    await sharp(image.path, { failOn: 'none', animated: false })
-      .rotate()
-      .resize({ width, fit: 'inside', withoutEnlargement: true })
-      .webp({ quality: 84, effort: 3, smartSubsample: true })
-      .toFile(temporaryPath)
+    await fs.writeFile(temporaryPath, data)
     await fs.rename(temporaryPath, path)
   } finally {
     await fs.unlink(temporaryPath).catch(() => undefined)
   }
+}
+
+async function renderThumbnailWithNativeImage(
+  image: IndexedImage,
+  path: string,
+  width: number
+): Promise<void> {
+  const source = await nativeImageSource(image.path, width)
+  await writeNativeImage(source, path, 'jpeg', width)
 }
 
 async function renderThumbnailWithSips(image: IndexedImage, path: string, width: number): Promise<void> {
@@ -114,8 +138,8 @@ async function renderThumbnail(image: IndexedImage, width: number): Promise<{ pa
   const work = (async (): Promise<{ path: string; type: string }> => {
     await fs.mkdir(join(app.getPath('userData'), 'cache', 'renders'), { recursive: true })
     try {
-      await renderThumbnailWithSharp(image, webpPath, width)
-      return { path: webpPath, type: 'image/webp' }
+      await renderThumbnailWithNativeImage(image, jpegPath, width)
+      return { path: jpegPath, type: 'image/jpeg' }
     } catch (error) {
       if (process.platform !== 'darwin') throw error
       await renderThumbnailWithSips(image, jpegPath, width)
@@ -150,6 +174,22 @@ async function renderFullPreviewWithSips(image: IndexedImage, path: string): Pro
   }
 }
 
+async function renderFullPreviewWithNativeImage(image: IndexedImage, path: string): Promise<void> {
+  const source = await nativeImageSource(image.path, 8192)
+  const size = source.getSize()
+  const longest = Math.max(size.width, size.height)
+  const preview = longest > 8192 ? source.resize({ width: 8192, height: 8192, quality: 'best' }) : source
+  const data = preview.toPNG()
+  if (!data.length) throw new Error('图片解码结果为空')
+  const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`
+  try {
+    await fs.writeFile(temporaryPath, data)
+    await fs.rename(temporaryPath, path)
+  } finally {
+    await fs.unlink(temporaryPath).catch(() => undefined)
+  }
+}
+
 async function renderFullPreview(image: IndexedImage): Promise<{ path: string; type: string }> {
   const cacheKey = digest(`${image.path}:${image.modifiedAt}:${image.size}:preview`)
   const path = cachePathFor(cacheKey, 'png')
@@ -162,23 +202,9 @@ async function renderFullPreview(image: IndexedImage): Promise<{ path: string; t
 
   const work = (async (): Promise<{ path: string; type: string }> => {
     await fs.mkdir(join(app.getPath('userData'), 'cache', 'renders'), { recursive: true })
-    const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`
     try {
-      const metadata = await sharp(image.path, { failOn: 'none' }).metadata()
-      const longest = Math.max(metadata.width ?? 0, metadata.height ?? 0)
-      const maxDimension = 8192
-      const resize =
-        longest > maxDimension
-          ? { width: maxDimension, height: maxDimension, fit: 'inside' as const }
-          : undefined
-      await sharp(image.path, { failOn: 'none' })
-        .rotate()
-        .resize(resize)
-        .png({ compressionLevel: 3, adaptiveFiltering: false })
-        .toFile(temporaryPath)
-      await fs.rename(temporaryPath, path)
+      await renderFullPreviewWithNativeImage(image, path)
     } catch (error) {
-      await fs.unlink(temporaryPath).catch(() => undefined)
       if (process.platform !== 'darwin') throw error
       await renderFullPreviewWithSips(image, path)
     }

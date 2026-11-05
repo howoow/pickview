@@ -13,7 +13,14 @@ import {
   LoaderCircle,
   X
 } from 'lucide-react'
-import type { DirectoryNode, LayoutMode, ScanProgress, ThemeMode, Workspace } from '../../shared/types'
+import type {
+  DirectoryNode,
+  LayoutMode,
+  ScanProgress,
+  ThemeMode,
+  UpdateCheckResult,
+  Workspace
+} from '../../shared/types'
 import { Gallery } from './components/Gallery'
 import { ImageViewer } from './components/ImageViewer'
 import { Sidebar } from './components/Sidebar'
@@ -137,6 +144,8 @@ export default function App(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null)
+  const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [viewerIndex, setViewerIndex] = useState<number | null>(null)
   const [heroId, setHeroId] = useState<string | null>(null)
   const [viewerPreview, setViewerPreview] = useState<{
@@ -208,8 +217,41 @@ export default function App(): React.JSX.Element {
     }
   }, [loadWorkspace])
 
+  const runUpdateCheck = useCallback(async (automatic = false) => {
+    if (!automatic) setSettingsOpen(true)
+    setCheckingUpdates(true)
+    try {
+      const result = await window.pickview.checkUpdates(automatic)
+      if (automatic && result.status === 'error') return
+      setUpdateInfo(result)
+    } catch {
+      if (automatic) return
+      setUpdateInfo({
+        status: 'error',
+        currentVersion: window.pickview.appVersion,
+        latestVersion: null,
+        releaseName: null,
+        releaseUrl: null,
+        downloadUrl: null,
+        downloadName: null,
+        publishedAt: null,
+        message: '无法连接更新服务，请检查网络后重试',
+        checkedAt: Date.now(),
+        cached: false
+      })
+    } finally {
+      setCheckingUpdates(false)
+    }
+  }, [])
+
   useEffect(() => window.pickview.onScanProgress(setScanProgress), [])
   useEffect(() => window.pickview.onChooseFolder(() => void chooseFolder()), [chooseFolder])
+  useEffect(() => window.pickview.onCheckUpdates(() => void runUpdateCheck(false)), [runUpdateCheck])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void runUpdateCheck(true), 5000)
+    return () => window.clearTimeout(timer)
+  }, [runUpdateCheck])
 
   useEffect(() => {
     if (!window.pickview.initialWorkspace || initialWorkspaceOpened.current) return
@@ -295,6 +337,20 @@ export default function App(): React.JSX.Element {
     setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')
   }
 
+  const handleOpenUpdateDownload = (): void => {
+    const url = updateInfo?.downloadUrl ?? updateInfo?.releaseUrl
+    if (!url) return
+    void window.pickview.openUpdateDownload(url).catch(() => {
+      void window.pickview.openReleasesPage()
+    })
+  }
+
+  const handleUninstall = (): void => {
+    void window.pickview.uninstall().catch((caught) => {
+      setError(caught instanceof Error ? caught.message : '无法启动卸载程序')
+    })
+  }
+
   const gallerySummary = isSearching
     ? `“${normalizedQuery}” · ${search.total.toLocaleString('zh-CN')} 张`
     : `${folderImages.length.toLocaleString('zh-CN')} 张照片`
@@ -327,6 +383,10 @@ export default function App(): React.JSX.Element {
           resolvedTheme={resolvedTheme}
           theme={theme}
           opacity={opacity}
+          appVersion={window.pickview.appVersion}
+          canUninstall={window.pickview.canUninstall}
+          updateInfo={updateInfo}
+          checkingUpdates={checkingUpdates}
           settingsOpen={settingsOpen}
           onQueryChange={setQuery}
           onSelectBreadcrumb={handleSelectDirectory}
@@ -336,6 +396,10 @@ export default function App(): React.JSX.Element {
           onCloseSettings={() => setSettingsOpen(false)}
           onThemeChange={setTheme}
           onOpacityChange={setOpacity}
+          onCheckUpdates={() => void runUpdateCheck(false)}
+          onOpenDownload={handleOpenUpdateDownload}
+          onOpenReleasesPage={() => void window.pickview.openReleasesPage()}
+          onUninstall={handleUninstall}
         />
 
         {workspace ? (

@@ -9,7 +9,7 @@ import {
   Sun,
   X
 } from 'lucide-react'
-import type { DirectoryNode, ThemeMode } from '../../../shared/types'
+import type { DirectoryNode, ThemeMode, UpdateCheckResult } from '../../../shared/types'
 import { SettingsPopover } from './SettingsPopover'
 
 export interface BreadcrumbItem {
@@ -29,6 +29,10 @@ interface ToolbarProps {
   resolvedTheme: 'light' | 'dark'
   theme: ThemeMode
   opacity: number
+  appVersion: string
+  canUninstall: boolean
+  updateInfo: UpdateCheckResult | null
+  checkingUpdates: boolean
   settingsOpen: boolean
   onQueryChange: (query: string) => void
   onSelectBreadcrumb: (node: DirectoryNode) => void
@@ -38,6 +42,10 @@ interface ToolbarProps {
   onCloseSettings: () => void
   onThemeChange: (theme: ThemeMode) => void
   onOpacityChange: (opacity: number) => void
+  onCheckUpdates: () => void
+  onOpenDownload: () => void
+  onOpenReleasesPage: () => void
+  onUninstall: () => void
 }
 
 export function Toolbar({
@@ -49,6 +57,10 @@ export function Toolbar({
   resolvedTheme,
   theme,
   opacity,
+  appVersion,
+  canUninstall,
+  updateInfo,
+  checkingUpdates,
   settingsOpen,
   onQueryChange,
   onSelectBreadcrumb,
@@ -57,9 +69,14 @@ export function Toolbar({
   onToggleSettings,
   onCloseSettings,
   onThemeChange,
-  onOpacityChange
+  onOpacityChange,
+  onCheckUpdates,
+  onOpenDownload,
+  onOpenReleasesPage,
+  onUninstall
 }: ToolbarProps): React.JSX.Element {
   const currentPath = breadcrumbs.at(-1)?.node?.path
+  const updateAvailable = updateInfo?.status === 'available'
 
   return (
     <header className={`toolbar drag-region${sidebarOpen ? '' : ' needs-traffic-gap'}`}>
@@ -159,18 +176,27 @@ export function Toolbar({
             className={`icon-button${settingsOpen ? ' is-active' : ''}`}
             type="button"
             title="界面设置"
-            aria-label="界面设置"
+            aria-label={updateAvailable ? '界面设置，有新版本' : '界面设置'}
             data-settings-trigger
             onClick={onToggleSettings}
           >
             <Settings2 size={17} />
+            {updateAvailable && <span className="update-dot" aria-hidden="true" />}
           </button>
           {settingsOpen && (
             <SettingsPopover
               theme={theme}
               opacity={opacity}
+              appVersion={appVersion}
+              canUninstall={canUninstall}
+              updateInfo={updateInfo}
+              checkingUpdates={checkingUpdates}
               onThemeChange={onThemeChange}
               onOpacityChange={onOpacityChange}
+              onCheckUpdates={onCheckUpdates}
+              onOpenDownload={onOpenDownload}
+              onOpenReleasesPage={onOpenReleasesPage}
+              onUninstall={onUninstall}
               onClose={onCloseSettings}
             />
           )}
