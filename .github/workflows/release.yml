@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            label: macOS Apple Silicon
+            script: build:mac
+            artifact: macos-arm64
+          - os: macos-15-intel
+            label: macOS Intel
+            script: build:mac
+            artifact: macos-x64
+          - os: windows-latest
+            label: Windows x64
+            script: build:win
+            artifact: windows-x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build installers
+        run: npm run ${{ matrix.script }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.blockmap
+            release/latest*.yml
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List release files
+        run: find artifacts -maxdepth 2 -type f -print
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: 捡影 ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          body_path: .github/release-notes/v0.0.1.md
+          files: artifacts/**/*
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+          make_latest: true
