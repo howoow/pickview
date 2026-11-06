@@ -79,7 +79,7 @@ jobs:
         with:
           name: 捡影 ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          body_path: .github/release-notes/v0.0.1.md
+          body_path: .github/release-notes/${{ github.ref_name }}.md
           files: artifacts/**/*
           fail_on_unmatched_files: true
           draft: false

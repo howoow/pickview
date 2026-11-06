@@ -24,14 +24,6 @@ interface UpdateCache {
   lastSuccess: ReleaseSummary | null
 }
 
-interface GitHubReleaseResponse {
-  tag_name?: unknown
-  name?: unknown
-  html_url?: unknown
-  published_at?: unknown
-  assets?: Array<{ name?: unknown; browser_download_url?: unknown }>
-}
-
 function cachePath(): string {
   return join(app.getPath('userData'), 'update-cache.json')
 }
@@ -81,64 +73,93 @@ function isNewerVersion(latest: string, current: string): boolean {
   return next.prerelease.localeCompare(installed.prerelease, undefined, { numeric: true }) > 0
 }
 
-function pickDownloadAsset(assets: GitHubReleaseResponse['assets']): {
-  url: string | null
-  name: string | null
-} {
-  const candidates = (assets ?? [])
-    .map((asset) => ({
-      name: typeof asset.name === 'string' ? asset.name : '',
-      url: typeof asset.browser_download_url === 'string' ? asset.browser_download_url : ''
-    }))
-    .filter((asset) => asset.name && asset.url)
-
-  if (candidates.length === 0) return { url: null, name: null }
-
-  const arch = process.arch === 'arm64' ? 'arm64' : process.arch === 'x64' ? 'x64' : ''
-  const rules =
-    process.platform === 'darwin'
-      ? [
-          new RegExp(`mac-${arch}\\.dmg$`, 'i'),
-          new RegExp(`mac-${arch}\\.zip$`, 'i'),
-          /mac-arm64\.dmg$/i,
-          /mac-x64\.dmg$/i,
-          /\.dmg$/i
-        ]
-      : process.platform === 'win32'
-        ? [
-            new RegExp(`win-${arch}\\.exe$`, 'i'),
-            /win-x64\.exe$/i,
-            /\.exe$/i
-          ]
-        : []
-
-  for (const rule of rules) {
-    const match = candidates.find((asset) => rule.test(asset.name))
-    if (match) return { url: match.url, name: match.name }
+function decodeXmlEntities(value: string): string {
+  const named: Record<string, string> = {
+    amp: '&',
+    apos: "'",
+    gt: '>',
+    lt: '<',
+    quot: '"'
   }
-  return { url: null, name: null }
+  return value.replace(
+    /&(?:#x([0-9a-f]+)|#(\d+)|([a-z]+));/gi,
+    (entity, hex: string | undefined, decimal: string | undefined, name: string | undefined) => {
+      if (name) return named[name.toLowerCase()] ?? entity
+      const codePoint = Number.parseInt(hex ?? decimal ?? '', hex ? 16 : 10)
+      if (!Number.isFinite(codePoint)) return entity
+      try {
+        return String.fromCodePoint(codePoint)
+      } catch {
+        return entity
+      }
+    }
+  )
 }
 
-function releaseSummary(payload: GitHubReleaseResponse): ReleaseSummary {
-  const tag = typeof payload.tag_name === 'string' ? payload.tag_name : ''
-  const version = tag.replace(/^v/i, '').trim() || tag
-  const asset = pickDownloadAsset(payload.assets)
-  const htmlUrl = typeof payload.html_url === 'string' ? payload.html_url : ''
+function xmlText(entry: string, tag: string): string {
+  const match = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i').exec(entry)
+  if (!match) return ''
+  const raw = match[1].trim()
+  const cdata = /^<!\[CDATA\[([\s\S]*?)\]\]>$/.exec(raw)
+  return decodeXmlEntities(cdata?.[1] ?? raw)
+}
+
+function releaseSummaryFromAtom(xml: string): ReleaseSummary {
+  const entry = /<entry\b[^>]*>([\s\S]*?)<\/entry>/i.exec(xml)?.[1]
+  if (!entry) throw new Error('Release feed is empty')
+
+  const id = xmlText(entry, 'id')
+  const encodedTag = /Repository\/\d+\/([^<]+)$/.exec(id)?.[1]
+  const tag = encodedTag ? decodeURIComponent(encodedTag) : ''
+  const version = tag.replace(/^v/i, '').trim()
+  if (!tag || !version) throw new Error('Release has no version')
+
+  const links = entry.match(/<link\b[^>]*>/gi) ?? []
+  const alternateLink = links.find((link) => /\brel="alternate"/i.test(link))
+  const encodedHref = alternateLink?.match(/\bhref="([^"]+)"/i)?.[1]
+  const href = encodedHref ? decodeXmlEntities(encodedHref) : ''
+  const target = href ? new URL(href, 'https://github.com') : null
+  const marker = `/${repository.toLowerCase()}/releases/tag/`
+  if (
+    !target ||
+    target.protocol !== 'https:' ||
+    target.hostname !== 'github.com' ||
+    !target.pathname.toLowerCase().startsWith(marker)
+  ) {
+    throw new Error('Release feed has an invalid link')
+  }
+
+  const platform =
+    process.platform === 'darwin'
+      ? { name: 'mac', extension: 'dmg' }
+      : process.platform === 'win32'
+        ? { name: 'win', extension: 'exe' }
+        : null
+  const arch =
+    process.arch === 'arm64' ? 'arm64' : process.arch === 'x64' ? 'x64' : null
+  const downloadName =
+    platform && arch ? `Pickview-${version}-${platform.name}-${arch}.${platform.extension}` : null
+  const downloadUrl = downloadName
+    ? `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(downloadName)}`
+    : null
+  const title = xmlText(entry, 'title')
+  const updatedAt = xmlText(entry, 'updated')
+
   return {
     version,
-    name: typeof payload.name === 'string' && payload.name ? payload.name : `捡影 v${version}`,
-    htmlUrl,
-    downloadUrl: asset.url,
-    downloadName: asset.name,
-    publishedAt: typeof payload.published_at === 'string' ? payload.published_at : null
+    name: title || `捡影 v${version}`,
+    htmlUrl: target.toString(),
+    downloadUrl,
+    downloadName,
+    publishedAt: Number.isNaN(Date.parse(updatedAt)) ? null : updatedAt
   }
 }
 
 async function fetchLatestRelease(): Promise<ReleaseSummary> {
-  const response = await net.fetch(`https://api.github.com/repos/${repository}/releases/latest`, {
+  const response = await net.fetch(`https://github.com/${repository}/releases.atom`, {
     headers: {
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
+      Accept: 'application/atom+xml,application/xml;q=0.9,text/xml;q=0.8',
+      'Cache-Control': 'no-cache',
       'User-Agent': `Pickview/${app.getVersion()}`
     },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
@@ -148,10 +169,66 @@ async function fetchLatestRelease(): Promise<ReleaseSummary> {
     throw new Error(`GitHub responded with ${response.status}`)
   }
 
-  const payload = (await response.json()) as GitHubReleaseResponse
-  const summary = releaseSummary(payload)
-  if (!summary.version) throw new Error('Release has no version')
-  return summary
+  return releaseSummaryFromAtom(await response.text())
+}
+
+function responseErrorStatus(error: unknown): number | null {
+  const message = error instanceof Error ? error.message : ''
+  const match = message.match(/GitHub responded with (\d{3})/)
+  if (!match) return null
+  const status = Number(match[1])
+  return Number.isFinite(status) ? status : null
+}
+
+function shouldRetry(status: number | null): boolean {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504
+}
+
+async function fetchLatestReleaseWithRetry(): Promise<ReleaseSummary> {
+  try {
+    return await fetchLatestRelease()
+  } catch (error) {
+    if (!shouldRetry(responseErrorStatus(error))) throw error
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    return fetchLatestRelease()
+  }
+}
+
+function releaseLooksUnavailable(error: unknown): boolean {
+  const status = responseErrorStatus(error)
+  return status === 404 || status === 410
+}
+
+function friendlyError(error: unknown): string {
+  const message = error instanceof Error ? error.message : ''
+  if (releaseLooksUnavailable(error)) return '尚未发布可下载版本'
+  if (message.includes('403') || message.includes('429')) {
+    return 'GitHub 请求繁忙，请稍后再试'
+  }
+  return '无法连接更新服务，请检查网络后重试'
+}
+
+export async function checkForUpdates(automatic = false): Promise<UpdateCheckResult> {
+  const currentVersion = app.getVersion()
+  const cache = await readCache()
+
+  if (automatic && cache && Date.now() - cache.lastAttemptAt < CHECK_INTERVAL_MS) {
+    return cache.lastSuccess
+      ? availableResult(cache.lastSuccess, currentVersion, true)
+      : errorResult('暂时无法检查更新', currentVersion, true)
+  }
+
+  try {
+    const summary = await fetchLatestReleaseWithRetry()
+    await writeCache({ repository, lastAttemptAt: Date.now(), lastSuccess: summary })
+    return availableResult(summary, currentVersion, false)
+  } catch (error) {
+    await writeCache({ repository, lastAttemptAt: Date.now(), lastSuccess: cache?.lastSuccess ?? null })
+    if (cache?.lastSuccess) {
+      return availableResult(cache.lastSuccess, currentVersion, true)
+    }
+    return errorResult(friendlyError(error), currentVersion, false)
+  }
 }
 
 function availableResult(summary: ReleaseSummary, currentVersion: string, cached: boolean): UpdateCheckResult {
@@ -183,36 +260,6 @@ function errorResult(message: string, currentVersion: string, cached: boolean): 
     message,
     checkedAt: Date.now(),
     cached
-  }
-}
-
-function friendlyError(error: unknown): string {
-  const message = error instanceof Error ? error.message : ''
-  if (message.includes('404')) return '更新服务暂不可用，请稍后再试'
-  if (message.includes('403') || message.includes('429')) return '检查过于频繁，请稍后再试'
-  return '无法连接更新服务，请检查网络后重试'
-}
-
-export async function checkForUpdates(automatic = false): Promise<UpdateCheckResult> {
-  const currentVersion = app.getVersion()
-  const cache = await readCache()
-
-  if (automatic && cache && Date.now() - cache.lastAttemptAt < CHECK_INTERVAL_MS) {
-    return cache.lastSuccess
-      ? availableResult(cache.lastSuccess, currentVersion, true)
-      : errorResult('暂时无法检查更新', currentVersion, true)
-  }
-
-  try {
-    const summary = await fetchLatestRelease()
-    await writeCache({ repository, lastAttemptAt: Date.now(), lastSuccess: summary })
-    return availableResult(summary, currentVersion, false)
-  } catch (error) {
-    await writeCache({ repository, lastAttemptAt: Date.now(), lastSuccess: cache?.lastSuccess ?? null })
-    if (cache?.lastSuccess && isNewerVersion(cache.lastSuccess.version, currentVersion)) {
-      return availableResult(cache.lastSuccess, currentVersion, true)
-    }
-    return errorResult(friendlyError(error), currentVersion, false)
   }
 }
 

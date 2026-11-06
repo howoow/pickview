@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import {
   ChevronLeft,
@@ -17,6 +17,7 @@ interface ImageViewerProps {
   activeIndex: number
   initialImageId: string | null
   initialPreviewUrl: string | null
+  fullImageReady: boolean
   onIndexChange: (index: number) => void
   onClose: () => void
   onReveal: (image: ImageRecord) => void
@@ -29,6 +30,8 @@ interface Point {
 
 const MIN_ZOOM = 0.35
 const MAX_ZOOM = 16
+const ZOOM_PRESETS = [1, 1.5, 3] as const
+const ZOOM_ANIMATION_MS = 220
 
 function clampZoom(value: number): number {
   return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value))
@@ -53,6 +56,7 @@ export function ImageViewer({
   activeIndex,
   initialImageId,
   initialPreviewUrl,
+  fullImageReady,
   onIndexChange,
   onClose,
   onReveal
@@ -62,14 +66,17 @@ export function ImageViewer({
   const zoomRef = useRef(1)
   const panRef = useRef<Point>({ x: 0, y: 0 })
   const dragRef = useRef<{ pointerId: number; start: Point; pan: Point } | null>(null)
+  const zoomAnimationRef = useRef<number | null>(null)
   const movedRef = useRef(false)
+  const loadSequenceRef = useRef(0)
+  const previousImageIdRef = useRef<string | null>(image?.id ?? null)
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 })
   const [dragging, setDragging] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [previewLoaded, setPreviewLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
-  const [useFallback, setUseFallback] = useState(false)
+  const [useFallback, setUseFallback] = useState(!image?.browserReadable)
 
   const setTransform = useCallback((nextZoom: number, nextPan: Point): void => {
     zoomRef.current = nextZoom
@@ -78,12 +85,20 @@ export function ImageViewer({
     setPan(nextPan)
   }, [])
 
+  const stopZoomAnimation = useCallback((): void => {
+    if (zoomAnimationRef.current === null) return
+    cancelAnimationFrame(zoomAnimationRef.current)
+    zoomAnimationRef.current = null
+  }, [])
+
   const resetTransform = useCallback((): void => {
+    stopZoomAnimation()
     setTransform(1, { x: 0, y: 0 })
-  }, [setTransform])
+  }, [setTransform, stopZoomAnimation])
 
   const zoomAt = useCallback(
     (nextZoom: number, clientX?: number, clientY?: number): void => {
+      stopZoomAnimation()
       const clamped = clampZoom(nextZoom)
       const currentZoom = zoomRef.current
       if (Math.abs(clamped - currentZoom) < 0.0001) return
@@ -102,7 +117,57 @@ export function ImageViewer({
       }
       setTransform(clamped, nextPan)
     },
-    [setTransform]
+    [setTransform, stopZoomAnimation]
+  )
+
+  const animateZoomAt = useCallback(
+    (nextZoom: number, clientX?: number, clientY?: number): void => {
+      stopZoomAnimation()
+      const targetZoom = clampZoom(nextZoom)
+      const startZoom = zoomRef.current
+      if (Math.abs(targetZoom - startZoom) < 0.0001) return
+
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      if (reduceMotion) {
+        zoomAt(targetZoom, clientX, clientY)
+        return
+      }
+
+      const startPan = { ...panRef.current }
+      const stage = stageRef.current
+      const rect = stage?.getBoundingClientRect()
+      const anchorX =
+        rect && clientX !== undefined ? clientX - rect.left - rect.width / 2 : 0
+      const anchorY =
+        rect && clientY !== undefined ? clientY - rect.top - rect.height / 2 : 0
+      const resetPan = Math.abs(targetZoom - 1) < 0.0001
+      const startedAt = performance.now()
+
+      const step = (now: number): void => {
+        const progress = Math.min(1, (now - startedAt) / ZOOM_ANIMATION_MS)
+        const eased = 1 - Math.pow(1 - progress, 3)
+        const currentZoom = startZoom + (targetZoom - startZoom) * eased
+        const ratio = currentZoom / startZoom
+        const nextPan = resetPan
+          ? {
+              x: startPan.x * (1 - eased),
+              y: startPan.y * (1 - eased)
+            }
+          : {
+              x: anchorX - (anchorX - startPan.x) * ratio,
+              y: anchorY - (anchorY - startPan.y) * ratio
+            }
+        setTransform(currentZoom, nextPan)
+        if (progress < 1) {
+          zoomAnimationRef.current = requestAnimationFrame(step)
+        } else {
+          zoomAnimationRef.current = null
+        }
+      }
+
+      zoomAnimationRef.current = requestAnimationFrame(step)
+    },
+    [setTransform, stopZoomAnimation, zoomAt]
   )
 
   const goTo = useCallback(
@@ -114,13 +179,19 @@ export function ImageViewer({
     [activeIndex, images.length, onIndexChange]
   )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (previousImageIdRef.current === (image?.id ?? null)) return
+    previousImageIdRef.current = image?.id ?? null
+    stopZoomAnimation()
+    loadSequenceRef.current += 1
     setLoaded(false)
     setPreviewLoaded(false)
     setFailed(false)
     setUseFallback(!image?.browserReadable)
     setTransform(1, { x: 0, y: 0 })
-  }, [image?.id, image?.browserReadable, setTransform])
+  }, [image?.id, image?.browserReadable, setTransform, stopZoomAnimation])
+
+  useEffect(() => () => stopZoomAnimation(), [stopZoomAnimation])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -135,10 +206,10 @@ export function ImageViewer({
         goTo(1)
       } else if (event.key === '+' || event.key === '=') {
         event.preventDefault()
-        zoomAt(zoomRef.current * 1.35)
+        animateZoomAt(zoomRef.current * 1.35)
       } else if (event.key === '-') {
         event.preventDefault()
-        zoomAt(zoomRef.current / 1.35)
+        animateZoomAt(zoomRef.current / 1.35)
       } else if (event.key === '0') {
         event.preventDefault()
         resetTransform()
@@ -146,7 +217,7 @@ export function ImageViewer({
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [goTo, onClose, resetTransform, zoomAt])
+  }, [animateZoomAt, goTo, onClose, resetTransform])
 
   useEffect(() => {
     const stage = stageRef.current
@@ -172,6 +243,19 @@ export function ImageViewer({
 
   if (!image) return null
 
+  const revealAfterDecode = (
+    target: HTMLImageElement,
+    apply: () => void
+  ): void => {
+    const sequence = loadSequenceRef.current
+    void target
+      .decode()
+      .catch(() => undefined)
+      .then(() => {
+        if (loadSequenceRef.current === sequence) apply()
+      })
+  }
+
   const source = useFallback
     ? `pickview://preview/${encodeURIComponent(image.id)}`
     : `pickview://original/${encodeURIComponent(image.id)}`
@@ -185,7 +269,8 @@ export function ImageViewer({
   } as CSSProperties
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
-    if (event.button !== 0 || zoomRef.current <= 1.05) return
+    if (event.button !== 0) return
+    stopZoomAnimation()
     event.preventDefault()
     event.stopPropagation()
     movedRef.current = false
@@ -227,6 +312,7 @@ export function ImageViewer({
         if (event.target === event.currentTarget) onClose()
       }}
     >
+      <div className="viewer-backdrop" aria-hidden="true" />
       <div className="viewer-header">
         <div className="viewer-file">
           <span className="viewer-filename">{image.name}</span>
@@ -285,8 +371,13 @@ export function ImageViewer({
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
             onDoubleClick={(event) => {
-              if (zoomRef.current > 1.05) resetTransform()
-              else zoomAt(2.5, event.clientX, event.clientY)
+              if (movedRef.current) {
+                movedRef.current = false
+                return
+              }
+              const next =
+                ZOOM_PRESETS.find((preset) => preset > zoomRef.current + 0.01) ?? 1
+              animateZoomAt(next, event.clientX, event.clientY)
             }}
           >
             <img
@@ -298,26 +389,30 @@ export function ImageViewer({
               width={image.width}
               height={image.height}
               draggable={false}
+              decoding="async"
               style={{ opacity: previewLoaded ? 1 : 0 }}
-              onLoad={() => setPreviewLoaded(true)}
+              onLoad={(event) => revealAfterDecode(event.currentTarget, () => setPreviewLoaded(true))}
             />
-            <img
-              key={`full:${image.id}:${source}`}
-              className="viewer-image viewer-image-full"
-              src={source}
-              alt={image.name}
-              draggable={false}
-              style={{ opacity: loaded ? 1 : 0 }}
-              onLoad={() => setLoaded(true)}
-              onError={() => {
-                if (!useFallback) {
-                  setLoaded(false)
-                  setUseFallback(true)
-                } else if (!previewLoaded) {
-                  setFailed(true)
-                }
-              }}
-            />
+            {fullImageReady && (
+              <img
+                key={`full:${image.id}:${source}`}
+                className="viewer-image viewer-image-full"
+                src={source}
+                alt={image.name}
+                draggable={false}
+                decoding="async"
+                style={{ opacity: loaded ? 1 : 0 }}
+                onLoad={(event) => revealAfterDecode(event.currentTarget, () => setLoaded(true))}
+                onError={() => {
+                  if (!useFallback) {
+                    setLoaded(false)
+                    setUseFallback(true)
+                  } else if (!previewLoaded) {
+                    setFailed(true)
+                  }
+                }}
+              />
+            )}
           </div>
         )}
 
@@ -348,7 +443,7 @@ export function ImageViewer({
           <button
             type="button"
             aria-label="缩小"
-            onClick={() => zoomAt(zoomRef.current / 1.35)}
+            onClick={() => animateZoomAt(zoomRef.current / 1.35)}
           >
             <Minus size={15} />
           </button>
@@ -358,7 +453,7 @@ export function ImageViewer({
           <button
             type="button"
             aria-label="放大"
-            onClick={() => zoomAt(zoomRef.current * 1.35)}
+            onClick={() => animateZoomAt(zoomRef.current * 1.35)}
           >
             <Plus size={15} />
           </button>
@@ -367,7 +462,7 @@ export function ImageViewer({
             <RotateCcw size={14} />
           </button>
         </div>
-        <span className="viewer-hint">滚轮缩放 · 拖动画面 · Esc 关闭</span>
+        <span className="viewer-hint">双击逐级放大 · 滚轮无级缩放 · 拖动画面</span>
       </div>
     </div>
   )

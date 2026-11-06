@@ -1,6 +1,6 @@
 {
   "name": "pickview",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "捡影（Pickview）— 面向本地图片工作区的快速图片浏览器",
   "main": "./out/main/index.js",
   "author": "howoow",

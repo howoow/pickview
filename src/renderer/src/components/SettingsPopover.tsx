@@ -105,14 +105,14 @@ export function SettingsPopover({
         <input
           className="range-input"
           type="range"
-          min="55"
+          min="35"
           max="100"
           step="1"
           value={Math.round(opacity * 100)}
           aria-label="界面透明度"
           onChange={(event) => onOpacityChange(Number(event.target.value) / 100)}
         />
-        <p className="settings-help">降低界面底色，让桌面背景透进来。图片始终保持不透明。</p>
+        <p className="settings-help">降低界面底色透明度，让桌面与后方窗口透进来。图片始终保持不透明。</p>
       </div>
 
       <div className="settings-block">

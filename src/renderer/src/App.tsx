@@ -81,19 +81,24 @@ function sortImages(images: Workspace['images'], mode: SortMode): Workspace['ima
   return sorted
 }
 
-function runViewTransition(update: () => void): void {
+function runViewTransition(update: () => void, onComplete?: () => void): void {
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   if (reduceMotion || typeof document.startViewTransition !== 'function') {
     update()
+    onComplete?.()
     return
   }
 
   try {
-    document.startViewTransition(() => {
+    const transition = document.startViewTransition(() => {
       flushSync(update)
     })
+    if (onComplete) {
+      void transition.finished.then(onComplete, onComplete)
+    }
   } catch {
     update()
+    onComplete?.()
   }
 }
 
@@ -152,6 +157,7 @@ export default function App(): React.JSX.Element {
     imageId: string
     url: string
   } | null>(null)
+  const [fullImageId, setFullImageId] = useState<string | null>(null)
 
   const [theme, setTheme] = usePersistedState<ThemeMode>('pickview.theme', 'system')
   const [opacity, setOpacity] = usePersistedState<number>('pickview.opacity', 0.86)
@@ -165,6 +171,8 @@ export default function App(): React.JSX.Element {
 
   const searchInputRef = useRef<HTMLInputElement>(null)
   const initialWorkspaceOpened = useRef(false)
+  const fullImageTimerRef = useRef<number | null>(null)
+  const fullImageSequenceRef = useRef(0)
   const systemDark = useSystemTheme()
   const resolvedTheme = theme === 'system' ? (systemDark ? 'dark' : 'light') : theme
   const normalizedQuery = query.trim()
@@ -265,6 +273,13 @@ export default function App(): React.JSX.Element {
     return () => window.clearTimeout(timer)
   }, [error])
 
+  useEffect(
+    () => () => {
+      if (fullImageTimerRef.current !== null) window.clearTimeout(fullImageTimerRef.current)
+    },
+    []
+  )
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
@@ -312,20 +327,49 @@ export default function App(): React.JSX.Element {
   const handleOpenViewer = (index: number, previewUrl: string): void => {
     const image = displayedImages[index]
     if (!image) return
+    if (fullImageTimerRef.current !== null) window.clearTimeout(fullImageTimerRef.current)
+    fullImageSequenceRef.current += 1
+    const sequence = fullImageSequenceRef.current
+    setFullImageId(null)
     flushSync(() => {
       setHeroId(image.id)
       setViewerPreview({ imageId: image.id, url: previewUrl })
     })
-    runViewTransition(() => setViewerIndex(index))
+    runViewTransition(
+      () => setViewerIndex(index),
+      () => {
+        if (fullImageSequenceRef.current !== sequence) return
+        fullImageTimerRef.current = window.setTimeout(() => {
+          if (fullImageSequenceRef.current !== sequence) return
+          window.requestAnimationFrame(() => {
+            if (fullImageSequenceRef.current === sequence) setFullImageId(image.id)
+          })
+        }, 16)
+      }
+    )
   }
 
   const handleViewerIndexChange = (index: number): void => {
     const image = displayedImages[index]
-    if (image) setHeroId(image.id)
+    if (!image) return
+    if (fullImageTimerRef.current !== null) window.clearTimeout(fullImageTimerRef.current)
+    fullImageSequenceRef.current += 1
+    const sequence = fullImageSequenceRef.current
+    setFullImageId(null)
+    setHeroId(image.id)
     setViewerIndex(index)
+    fullImageTimerRef.current = window.setTimeout(() => {
+      if (fullImageSequenceRef.current !== sequence) return
+      window.requestAnimationFrame(() => {
+        if (fullImageSequenceRef.current === sequence) setFullImageId(image.id)
+      })
+    }, 72)
   }
 
   const handleCloseViewer = (): void => {
+    if (fullImageTimerRef.current !== null) window.clearTimeout(fullImageTimerRef.current)
+    fullImageSequenceRef.current += 1
+    setFullImageId(null)
     if (viewerIndex !== null) {
       const image = displayedImages[viewerIndex]
       if (image) flushSync(() => setHeroId(image.id))
@@ -544,6 +588,7 @@ export default function App(): React.JSX.Element {
           activeIndex={viewerIndex}
           initialImageId={viewerPreview?.imageId ?? null}
           initialPreviewUrl={viewerPreview?.url ?? null}
+          fullImageReady={fullImageId === displayedImages[viewerIndex]?.id}
           onIndexChange={handleViewerIndexChange}
           onClose={handleCloseViewer}
           onReveal={(image) => void window.pickview.revealInFinder(image.path)}

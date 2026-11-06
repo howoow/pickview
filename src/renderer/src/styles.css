@@ -9,11 +9,17 @@
 
 :root,
 :root[data-theme="light"] {
-  --window-bg: rgb(242 242 244 / var(--ui-opacity));
-  --sidebar-bg: rgb(236 236 239 / var(--ui-opacity));
-  --surface: rgb(255 255 255 / calc(0.56 + var(--ui-opacity) * 0.4));
-  --surface-strong: rgb(255 255 255 / calc(0.84 + var(--ui-opacity) * 0.16));
-  --surface-soft: rgb(255 255 255 / calc(0.3 + var(--ui-opacity) * 0.34));
+  --window-rgb: 242 242 244;
+  --sidebar-rgb: 236 236 239;
+  --surface-rgb: 255 255 255;
+  --surface-strong-rgb: 255 255 255;
+  --surface-soft-rgb: 255 255 255;
+  --surface-alpha-base: 0.56;
+  --surface-alpha-scale: 0.4;
+  --surface-strong-alpha-base: 0.84;
+  --surface-strong-alpha-scale: 0.16;
+  --surface-soft-alpha-base: 0.3;
+  --surface-soft-alpha-scale: 0.34;
   --hover: rgb(0 0 0 / 0.045);
   --hover-strong: rgb(0 0 0 / 0.072);
   --text: #1d1d1f;
@@ -34,11 +40,17 @@
 }
 
 :root[data-theme="dark"] {
-  --window-bg: rgb(28 28 30 / var(--ui-opacity));
-  --sidebar-bg: rgb(35 35 38 / var(--ui-opacity));
-  --surface: rgb(44 44 46 / calc(0.62 + var(--ui-opacity) * 0.34));
-  --surface-strong: rgb(50 50 53 / calc(0.84 + var(--ui-opacity) * 0.16));
-  --surface-soft: rgb(255 255 255 / calc(0.045 + var(--ui-opacity) * 0.025));
+  --window-rgb: 28 28 30;
+  --sidebar-rgb: 35 35 38;
+  --surface-rgb: 44 44 46;
+  --surface-strong-rgb: 50 50 53;
+  --surface-soft-rgb: 255 255 255;
+  --surface-alpha-base: 0.62;
+  --surface-alpha-scale: 0.34;
+  --surface-strong-alpha-base: 0.84;
+  --surface-strong-alpha-scale: 0.16;
+  --surface-soft-alpha-base: 0.045;
+  --surface-soft-alpha-scale: 0.025;
   --hover: rgb(255 255 255 / 0.06);
   --hover-strong: rgb(255 255 255 / 0.095);
   --text: #f5f5f7;
@@ -72,6 +84,7 @@ body,
 
 html {
   background: transparent;
+  view-transition-name: none;
 }
 
 body {
@@ -137,6 +150,20 @@ select:focus-visible,
 }
 
 .app-shell {
+  --window-bg: rgb(var(--window-rgb) / var(--ui-opacity));
+  --sidebar-bg: rgb(var(--sidebar-rgb) / var(--ui-opacity));
+  --surface: rgb(
+    var(--surface-rgb) /
+      calc(var(--surface-alpha-base) + var(--ui-opacity) * var(--surface-alpha-scale))
+  );
+  --surface-strong: rgb(
+    var(--surface-strong-rgb) /
+      calc(var(--surface-strong-alpha-base) + var(--ui-opacity) * var(--surface-strong-alpha-scale))
+  );
+  --surface-soft: rgb(
+    var(--surface-soft-rgb) /
+      calc(var(--surface-soft-alpha-base) + var(--ui-opacity) * var(--surface-soft-alpha-scale))
+  );
   position: relative;
   display: flex;
   width: 100%;
@@ -1605,7 +1632,16 @@ a {
   display: flex;
   flex-direction: column;
   color: #f5f5f7;
+  background: transparent;
+}
+
+.viewer-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
   background: #121214;
+  pointer-events: none;
+  animation: viewerBackdropIn 180ms ease-out both;
 }
 
 .viewer-header {
@@ -1618,6 +1654,7 @@ a {
   justify-content: space-between;
   gap: 24px;
   padding: 5px 16px 4px 88px;
+  animation: viewerChromeIn 240ms var(--ease-out) 36ms both;
 }
 
 .viewer-file {
@@ -1688,6 +1725,7 @@ a {
 
 .viewer-stage {
   position: relative;
+  z-index: 1;
   display: flex;
   min-height: 0;
   flex: 1;
@@ -1706,11 +1744,12 @@ a {
   flex: none;
   overflow: hidden;
   line-height: 0;
-  cursor: zoom-in;
+  cursor: grab;
   touch-action: none;
   user-select: none;
   will-change: transform;
   view-transition-name: photo-hero;
+  contain: layout paint style;
 }
 
 .viewer-photo.is-dragging {
@@ -1726,6 +1765,7 @@ a {
   object-fit: contain;
   pointer-events: none;
   user-select: none;
+  backface-visibility: hidden;
   transition: opacity 160ms ease;
 }
 
@@ -1761,6 +1801,7 @@ a {
   background: rgb(38 38 41 / 0.72);
   box-shadow: 0 5px 24px rgb(0 0 0 / 0.22);
   transform: translateY(-50%);
+  animation: viewerChromeFadeIn 200ms ease-out 120ms both;
 }
 
 .viewer-nav:hover {
@@ -1786,6 +1827,7 @@ a {
   align-items: center;
   justify-content: center;
   padding: 7px 24px 11px;
+  animation: viewerChromeIn 240ms var(--ease-out) 72ms both;
 }
 
 .viewer-zoom {
@@ -1834,7 +1876,7 @@ a {
 }
 
 ::view-transition-group(photo-hero) {
-  animation-duration: 380ms;
+  animation-duration: 300ms;
   animation-timing-function: var(--ease-out);
 }
 
@@ -1846,11 +1888,11 @@ a {
 }
 
 ::view-transition-old(photo-hero) {
-  animation: photoHeroOut 90ms ease-out both;
+  animation: photoHeroOut 120ms ease-out both;
 }
 
 ::view-transition-new(photo-hero) {
-  animation: photoHeroIn 110ms ease-out both;
+  animation: photoHeroIn 140ms ease-out both;
 }
 
 ::view-transition-old(root),
@@ -2095,6 +2137,25 @@ a {
 
 @keyframes photoHeroOut {
   to {
+    opacity: 0;
+  }
+}
+
+@keyframes viewerBackdropIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes viewerChromeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes viewerChromeFadeIn {
+  from {
     opacity: 0;
   }
 }
