@@ -31,6 +31,7 @@ interface ToolbarProps {
   opacity: number
   appVersion: string
   canUninstall: boolean
+  liquidGlass: boolean
   updateInfo: UpdateCheckResult | null
   checkingUpdates: boolean
   settingsOpen: boolean
@@ -59,6 +60,7 @@ export function Toolbar({
   opacity,
   appVersion,
   canUninstall,
+  liquidGlass,
   updateInfo,
   checkingUpdates,
   settingsOpen,
@@ -189,6 +191,7 @@ export function Toolbar({
               opacity={opacity}
               appVersion={appVersion}
               canUninstall={canUninstall}
+              liquidGlass={liquidGlass}
               updateInfo={updateInfo}
               checkingUpdates={checkingUpdates}
               onThemeChange={onThemeChange}

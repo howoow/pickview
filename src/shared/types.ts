@@ -60,14 +60,17 @@ export interface PickviewApi {
   platform: NodeJS.Platform
   appVersion: string
   canUninstall: boolean
+  liquidGlass: boolean
   initialWorkspace: string | null
   chooseFolder: () => Promise<string | null>
   openWorkspace: (rootPath: string) => Promise<Workspace>
   revealInFinder: (path: string) => Promise<void>
+  showImageMenu: (path: string) => Promise<void>
   checkUpdates: (automatic?: boolean) => Promise<UpdateCheckResult>
   openUpdateDownload: (url: string) => Promise<void>
   openReleasesPage: () => Promise<void>
   uninstall: () => Promise<void>
+  setWindowAppearance: (appearance: 'light' | 'dark') => void
   onScanProgress: (callback: (progress: ScanProgress) => void) => () => void
   onChooseFolder: (callback: () => void) => () => void
   onCheckUpdates: (callback: () => void) => () => void

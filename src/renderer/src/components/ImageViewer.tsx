@@ -21,6 +21,7 @@ interface ImageViewerProps {
   onIndexChange: (index: number) => void
   onClose: () => void
   onReveal: (image: ImageRecord) => void
+  onContextMenu: (image: ImageRecord) => void
 }
 
 interface Point {
@@ -59,7 +60,8 @@ export function ImageViewer({
   fullImageReady,
   onIndexChange,
   onClose,
-  onReveal
+  onReveal,
+  onContextMenu
 }: ImageViewerProps): React.JSX.Element | null {
   const image = images[activeIndex]
   const stageRef = useRef<HTMLDivElement>(null)
@@ -202,6 +204,12 @@ export function ImageViewer({
         event.preventDefault()
         goTo(-1)
       } else if (event.key === 'ArrowRight') {
+        event.preventDefault()
+        goTo(1)
+      } else if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'a') {
+        event.preventDefault()
+        goTo(-1)
+      } else if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'd') {
         event.preventDefault()
         goTo(1)
       } else if (event.key === '+' || event.key === '=') {
@@ -370,6 +378,10 @@ export function ImageViewer({
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
+            onContextMenu={(event) => {
+              event.preventDefault()
+              onContextMenu(image)
+            }}
             onDoubleClick={(event) => {
               if (movedRef.current) {
                 movedRef.current = false
@@ -462,7 +474,7 @@ export function ImageViewer({
             <RotateCcw size={14} />
           </button>
         </div>
-        <span className="viewer-hint">双击逐级放大 · 滚轮无级缩放 · 拖动画面</span>
+        <span className="viewer-hint">A / D 或方向键切换 · 双击逐级放大 · 滚轮无级缩放</span>
       </div>
     </div>
   )

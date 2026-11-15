@@ -34,6 +34,34 @@ const MIME_TYPES: Record<string, string> = {
   '.svg': 'image/svg+xml'
 }
 
+class LimitedQueue {
+  private active = 0
+  private readonly waiting: Array<() => void> = []
+
+  constructor(private readonly limit: number) {}
+
+  run<T>(task: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const execute = (): void => {
+        this.active += 1
+        Promise.resolve()
+          .then(task)
+          .then(resolve, reject)
+          .finally(() => {
+            this.active -= 1
+            this.waiting.shift()?.()
+          })
+      }
+
+      if (this.active < this.limit) execute()
+      else this.waiting.push(execute)
+    })
+  }
+}
+
+const thumbnailQueue = new LimitedQueue(3)
+const previewQueue = new LimitedQueue(1)
+
 function digest(value: string): string {
   return createHash('sha1').update(value).digest('hex')
 }
@@ -47,17 +75,15 @@ function cachePathFor(cacheKey: string, extension: string): string {
 }
 
 async function readCached(path: string, type: string): Promise<Response | null> {
-  try {
-    const data = await fs.readFile(path)
-    return new Response(data, {
-      headers: {
-        'Content-Type': type,
-        'Cache-Control': 'public, max-age=31536000, immutable'
-      }
-    })
-  } catch {
-    return null
-  }
+  const info = await fs.stat(path).catch(() => null)
+  if (!info?.isFile() || !info.size) return null
+  const stream = Readable.toWeb(createReadStream(path)) as unknown as ReadableStream<Uint8Array>
+  return new Response(stream, {
+    headers: {
+      'Content-Type': type,
+      'Cache-Control': 'public, max-age=31536000, immutable'
+    }
+  })
 }
 
 function nativeImageSource(imagePath: string, maxDimension: number): Promise<Electron.NativeImage> {
@@ -137,14 +163,16 @@ async function renderThumbnail(image: IndexedImage, width: number): Promise<{ pa
 
   const work = (async (): Promise<{ path: string; type: string }> => {
     await fs.mkdir(join(app.getPath('userData'), 'cache', 'renders'), { recursive: true })
-    try {
-      await renderThumbnailWithNativeImage(image, jpegPath, width)
-      return { path: jpegPath, type: 'image/jpeg' }
-    } catch (error) {
-      if (process.platform !== 'darwin') throw error
-      await renderThumbnailWithSips(image, jpegPath, width)
-      return { path: jpegPath, type: 'image/jpeg' }
-    }
+    return thumbnailQueue.run(async () => {
+      try {
+        await renderThumbnailWithNativeImage(image, jpegPath, width)
+        return { path: jpegPath, type: 'image/jpeg' }
+      } catch (error) {
+        if (process.platform !== 'darwin') throw error
+        await renderThumbnailWithSips(image, jpegPath, width)
+        return { path: jpegPath, type: 'image/jpeg' }
+      }
+    })
   })()
 
   pendingThumbnails.set(pendingKey, work)
@@ -202,13 +230,15 @@ async function renderFullPreview(image: IndexedImage): Promise<{ path: string; t
 
   const work = (async (): Promise<{ path: string; type: string }> => {
     await fs.mkdir(join(app.getPath('userData'), 'cache', 'renders'), { recursive: true })
-    try {
-      await renderFullPreviewWithNativeImage(image, path)
-    } catch (error) {
-      if (process.platform !== 'darwin') throw error
-      await renderFullPreviewWithSips(image, path)
-    }
-    return { path, type: 'image/png' }
+    return previewQueue.run(async () => {
+      try {
+        await renderFullPreviewWithNativeImage(image, path)
+      } catch (error) {
+        if (process.platform !== 'darwin') throw error
+        await renderFullPreviewWithSips(image, path)
+      }
+      return { path, type: 'image/png' }
+    })
   })()
 
   pendingThumbnails.set(pendingKey, work)

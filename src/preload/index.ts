@@ -7,6 +7,9 @@ const api: PickviewApi = {
     process.argv.find((argument) => argument.startsWith('--pickview-version='))?.slice('--pickview-version='.length) ??
     '',
   canUninstall: process.platform === 'win32',
+  liquidGlass:
+    process.argv.find((argument) => argument.startsWith('--pickview-liquid-glass='))?.slice('--pickview-liquid-glass='.length) ===
+    '1',
   initialWorkspace:
     process.argv.find((argument) => argument.startsWith('--pickview-workspace='))?.slice('--pickview-workspace='.length) ??
     null,
@@ -14,12 +17,17 @@ const api: PickviewApi = {
   openWorkspace: (rootPath: string) =>
     ipcRenderer.invoke('workspace:open', rootPath) as Promise<Workspace>,
   revealInFinder: (path: string) => ipcRenderer.invoke('shell:reveal', path) as Promise<void>,
+  showImageMenu: (path: string) =>
+    ipcRenderer.invoke('image:context-menu', path) as Promise<void>,
   checkUpdates: (automatic = false) =>
     ipcRenderer.invoke('updates:check', automatic) as Promise<UpdateCheckResult>,
   openUpdateDownload: (url: string) =>
     ipcRenderer.invoke('updates:open-download', url) as Promise<void>,
   openReleasesPage: () => ipcRenderer.invoke('updates:open-releases') as Promise<void>,
   uninstall: () => ipcRenderer.invoke('app:uninstall') as Promise<void>,
+  setWindowAppearance: (appearance: 'light' | 'dark') => {
+    ipcRenderer.send('window:appearance', appearance)
+  },
   onScanProgress: (callback: (progress: ScanProgress) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: ScanProgress): void => callback(progress)
     ipcRenderer.on('workspace:scan-progress', listener)

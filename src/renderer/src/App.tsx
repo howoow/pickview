@@ -4,6 +4,7 @@ import { flushSync } from 'react-dom'
 import {
   AlertCircle,
   ArrowDownWideNarrow,
+  ArrowUpDown,
   CalendarClock,
   Columns3,
   Folder,
@@ -30,6 +31,7 @@ import { usePersistedState } from './hooks/usePersistedState'
 import { useWorkspaceSearch } from './hooks/useWorkspaceSearch'
 
 type SortMode = 'name' | 'newest' | 'largest'
+type SortDirection = 'asc' | 'desc'
 type ThumbnailSize = 'small' | 'medium' | 'large'
 
 const THUMBNAIL_PIXELS: Record<ThumbnailSize, number> = {
@@ -73,11 +75,22 @@ function firstDirectoryWithImages(node: DirectoryNode): DirectoryNode {
   return node
 }
 
-function sortImages(images: Workspace['images'], mode: SortMode): Workspace['images'] {
+function compareImages(a: Workspace['images'][number], b: Workspace['images'][number], mode: SortMode): number {
+  if (mode === 'newest') return a.modifiedAt - b.modifiedAt
+  if (mode === 'largest') return a.size - b.size
+  return collator.compare(a.relativePath, b.relativePath)
+}
+
+function sortImages(
+  images: Workspace['images'],
+  mode: SortMode,
+  direction: SortDirection
+): Workspace['images'] {
   const sorted = [...images]
-  if (mode === 'newest') sorted.sort((a, b) => b.modifiedAt - a.modifiedAt)
-  else if (mode === 'largest') sorted.sort((a, b) => b.size - a.size)
-  else sorted.sort((a, b) => collator.compare(a.relativePath, b.relativePath))
+  sorted.sort((a, b) => {
+    const result = compareImages(a, b, mode)
+    return direction === 'asc' ? result : -result
+  })
   return sorted
 }
 
@@ -160,13 +173,20 @@ export default function App(): React.JSX.Element {
   const [fullImageId, setFullImageId] = useState<string | null>(null)
 
   const [theme, setTheme] = usePersistedState<ThemeMode>('pickview.theme', 'system')
-  const [opacity, setOpacity] = usePersistedState<number>('pickview.opacity', 0.86)
+  const [opacity, setOpacity] = usePersistedState<number>(
+    'pickview.opacity',
+    window.pickview.liquidGlass ? 0.78 : 0.86
+  )
   const [layoutMode, setLayoutMode] = usePersistedState<LayoutMode>('pickview.layout', 'masonry')
   const [thumbnailSize, setThumbnailSize] = usePersistedState<ThumbnailSize>(
     'pickview.thumbnailSize',
     'medium'
   )
   const [sortMode, setSortMode] = usePersistedState<SortMode>('pickview.sort', 'name')
+  const [sortDirection, setSortDirection] = usePersistedState<SortDirection>(
+    'pickview.sortDirection',
+    'asc'
+  )
   const [recents, setRecents] = usePersistedState<RecentWorkspace[]>('pickview.recents', [])
 
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -182,6 +202,7 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     document.documentElement.dataset.theme = resolvedTheme
     document.documentElement.style.colorScheme = resolvedTheme
+    if (window.pickview.liquidGlass) window.pickview.setWindowAppearance(resolvedTheme)
   }, [resolvedTheme])
 
   const rememberWorkspace = useCallback(
@@ -301,8 +322,8 @@ export default function App(): React.JSX.Element {
   const folderImages = useMemo(() => {
     if (!workspace || !selectedDirectory) return []
     const direct = workspace.images.filter((image) => image.directoryPath === selectedDirectory.path)
-    return sortImages(direct, sortMode)
-  }, [selectedDirectory, sortMode, workspace])
+    return sortImages(direct, sortMode, sortDirection)
+  }, [selectedDirectory, sortDirection, sortMode, workspace])
 
   const searchImages = useMemo(() => {
     if (!workspace || !search.indices) return []
@@ -377,6 +398,13 @@ export default function App(): React.JSX.Element {
     runViewTransition(() => setViewerIndex(null))
   }
 
+  const handleSortModeChange = (nextMode: SortMode): void => {
+    setSortMode(nextMode)
+    if (nextMode !== sortMode) {
+      setSortDirection(nextMode === 'name' ? 'asc' : 'desc')
+    }
+  }
+
   const handleThemeToggle = (): void => {
     setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')
   }
@@ -406,8 +434,15 @@ export default function App(): React.JSX.Element {
 
   return (
     <div
-      className={`app-shell platform-${window.pickview.platform}${sidebarOpen ? '' : ' sidebar-collapsed'}`}
-      style={{ '--ui-opacity': opacity } as CSSProperties}
+      className={`app-shell platform-${window.pickview.platform}${sidebarOpen ? '' : ' sidebar-collapsed'}${window.pickview.liquidGlass ? ' is-liquid-glass' : ''}`}
+      style={
+        {
+          '--ui-opacity': opacity,
+          ...(window.pickview.liquidGlass
+            ? { '--glass-backdrop-opacity': Math.pow(opacity, 1.8).toFixed(3) }
+            : {})
+        } as CSSProperties
+      }
     >
       <Sidebar
         open={sidebarOpen}
@@ -429,6 +464,7 @@ export default function App(): React.JSX.Element {
           opacity={opacity}
           appVersion={window.pickview.appVersion}
           canUninstall={window.pickview.canUninstall}
+          liquidGlass={window.pickview.liquidGlass}
           updateInfo={updateInfo}
           checkingUpdates={checkingUpdates}
           settingsOpen={settingsOpen}
@@ -457,24 +493,38 @@ export default function App(): React.JSX.Element {
 
               <div className="gallery-controls">
                 {!isSearching && (
-                  <label className="sort-control" title="排序方式">
-                    {sortMode === 'newest' ? (
-                      <CalendarClock size={14} />
-                    ) : sortMode === 'largest' ? (
-                      <HardDrive size={14} />
-                    ) : (
-                      <ArrowDownWideNarrow size={14} />
-                    )}
-                    <select
-                      value={sortMode}
-                      aria-label="排序方式"
-                      onChange={(event) => setSortMode(event.target.value as SortMode)}
-                    >
-                      <option value="name">名称</option>
-                      <option value="newest">最近修改</option>
-                      <option value="largest">文件大小</option>
-                    </select>
-                  </label>
+                  <>
+                    <label className="sort-control" title="排序方式">
+                      {sortMode === 'newest' ? (
+                        <CalendarClock size={14} />
+                      ) : sortMode === 'largest' ? (
+                        <HardDrive size={14} />
+                      ) : (
+                        <ArrowDownWideNarrow size={14} />
+                      )}
+                      <select
+                        value={sortMode}
+                        aria-label="排序方式"
+                        onChange={(event) => handleSortModeChange(event.target.value as SortMode)}
+                      >
+                        <option value="name">名称</option>
+                        <option value="newest">最近修改</option>
+                        <option value="largest">文件大小</option>
+                      </select>
+                    </label>
+
+                    <label className="sort-direction-control" title="排序方向">
+                      <ArrowUpDown size={13} />
+                      <select
+                        value={sortDirection}
+                        aria-label="排序方向"
+                        onChange={(event) => setSortDirection(event.target.value as SortDirection)}
+                      >
+                        <option value="asc">正序</option>
+                        <option value="desc">倒序</option>
+                      </select>
+                    </label>
+                  </>
                 )}
 
                 <div className="segmented-control size-segment" role="group" aria-label="缩略图大小">
@@ -524,6 +574,7 @@ export default function App(): React.JSX.Element {
               heroId={viewerIndex === null ? heroId : null}
               resetKey={`${isSearching ? 'search' : selectedPath}:${isSearching ? normalizedQuery : ''}`}
               onOpen={handleOpenViewer}
+              onContextMenu={(image) => void window.pickview.showImageMenu(image.path)}
             />
 
             <footer className="statusbar">
@@ -592,6 +643,7 @@ export default function App(): React.JSX.Element {
           onIndexChange={handleViewerIndexChange}
           onClose={handleCloseViewer}
           onReveal={(image) => void window.pickview.revealInFinder(image.path)}
+          onContextMenu={(image) => void window.pickview.showImageMenu(image.path)}
         />
       )}
     </div>

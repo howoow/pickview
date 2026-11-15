@@ -7,6 +7,7 @@ interface SettingsPopoverProps {
   opacity: number
   appVersion: string
   canUninstall: boolean
+  liquidGlass: boolean
   updateInfo: UpdateCheckResult | null
   checkingUpdates: boolean
   onThemeChange: (theme: ThemeMode) => void
@@ -29,6 +30,7 @@ export function SettingsPopover({
   opacity,
   appVersion,
   canUninstall,
+  liquidGlass,
   updateInfo,
   checkingUpdates,
   onThemeChange,
@@ -112,7 +114,11 @@ export function SettingsPopover({
           aria-label="界面透明度"
           onChange={(event) => onOpacityChange(Number(event.target.value) / 100)}
         />
-        <p className="settings-help">降低界面底色透明度，让桌面与后方窗口透进来。图片始终保持不透明。</p>
+        <p className="settings-help">
+          {liquidGlass
+            ? 'macOS 原生液态玻璃已启用。降低透明度，让桌面与后方窗口透过玻璃显现。图片始终保持不透明。'
+            : '降低界面底色透明度，让桌面与后方窗口透进来。图片始终保持不透明。'}
+        </p>
       </div>
 
       <div className="settings-block">

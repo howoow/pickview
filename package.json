@@ -1,6 +1,6 @@
 {
   "name": "pickview",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "捡影（Pickview）— 面向本地图片工作区的快速图片浏览器",
   "main": "./out/main/index.js",
   "author": "howoow",
@@ -54,12 +54,26 @@
     "mac": {
       "category": "public.app-category.photography",
       "icon": "resources/icon.icns",
+      "extraResources": [
+        {
+          "from": "node_modules/electron-liquid-glass/prebuilds/darwin-arm64/node.napi.armv8.node",
+          "to": "native/liquid-glass/arm64.node"
+        },
+        {
+          "from": "node_modules/electron-liquid-glass/prebuilds/darwin-x64/node.napi.node",
+          "to": "native/liquid-glass/x64.node"
+        },
+        {
+          "from": "node_modules/electron-liquid-glass/LICENSE",
+          "to": "native/liquid-glass/LICENSE"
+        }
+      ],
       "target": [
         "dmg"
       ]
     },
     "win": {
-      "icon": "resources/icon.png",
+      "icon": "resources/icon.ico",
       "target": "nsis"
     },
     "nsis": {
@@ -69,5 +83,8 @@
       "createStartMenuShortcut": true,
       "deleteAppDataOnUninstall": true
     }
+  },
+  "optionalDependencies": {
+    "electron-liquid-glass": "1.1.1"
   }
 }

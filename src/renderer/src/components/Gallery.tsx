@@ -12,6 +12,7 @@ interface GalleryProps {
   heroId: string | null
   resetKey: string
   onOpen: (index: number, previewUrl: string) => void
+  onContextMenu: (image: ImageRecord) => void
 }
 
 interface PhotoTileProps {
@@ -24,6 +25,21 @@ interface PhotoTileProps {
   showPath: boolean
   heroId: string | null
   onOpen: (index: number, previewUrl: string) => void
+  onContextMenu: (image: ImageRecord) => void
+}
+
+function lowerBound(
+  positions: Array<{ y: number }>,
+  target: number
+): number {
+  let low = 0
+  let high = positions.length
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if (positions[middle].y < target) low = middle + 1
+    else high = middle
+  }
+  return low
 }
 
 function formatDimensions(image: ImageRecord): string {
@@ -39,7 +55,8 @@ function PhotoTile({
   y,
   showPath,
   heroId,
-  onOpen
+  onOpen,
+  onContextMenu
 }: PhotoTileProps): React.JSX.Element {
   const [failed, setFailed] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -54,6 +71,10 @@ function PhotoTile({
       title={`${image.name}\n${formatDimensions(image)}`}
       draggable={false}
       onClick={() => onOpen(index, thumbnailUrl)}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        onContextMenu(image)
+      }}
     >
       {!loaded && !failed && <span className="photo-placeholder" aria-hidden="true" />}
       {failed ? (
@@ -71,6 +92,7 @@ function PhotoTile({
               aria-hidden="true"
               loading="eager"
               decoding="async"
+              fetchPriority="high"
               draggable={false}
               onLoad={() => setLoaded(true)}
             />
@@ -79,8 +101,9 @@ function PhotoTile({
             className={`photo-image${heroId === image.id ? ' is-view-hero' : ''}`}
             src={thumbnailUrl}
             alt={image.name}
-            loading="eager"
+            loading={heroId === image.id ? 'eager' : 'lazy'}
             decoding="async"
+            fetchPriority={heroId === image.id ? 'high' : 'low'}
             draggable={false}
             onLoad={() => setLoaded(true)}
             onError={() => setFailed(true)}
@@ -103,7 +126,8 @@ export function Gallery({
   showPath,
   heroId,
   resetKey,
-  onOpen
+  onOpen,
+  onContextMenu
 }: GalleryProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const frameRef = useRef<number | null>(null)
@@ -160,7 +184,15 @@ export function Gallery({
     const top = viewport.top - buffer
     const bottom = viewport.top + viewport.height + buffer
     const result: Array<{ index: number; position: (typeof positions)[number] }> = []
-    for (let index = 0; index < positions.length; index += 1) {
+    if (positions.length === 0 || viewport.height <= 0) return result
+
+    let start = lowerBound(positions, top)
+    while (start > 0 && positions[start - 1].y + positions[start - 1].height > top) {
+      start -= 1
+    }
+    const end = lowerBound(positions, bottom)
+
+    for (let index = start; index < end; index += 1) {
       const position = positions[index]
       if (position.y < bottom && position.y + position.height > top) result.push({ index, position })
     }
@@ -193,6 +225,7 @@ export function Gallery({
               showPath={showPath}
               heroId={heroId}
               onOpen={onOpen}
+              onContextMenu={onContextMenu}
             />
           ))}
         </div>

@@ -1,8 +1,16 @@
 import { spawn } from 'node:child_process'
 import { readdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { clearImageIndex, indexImages, installImageProtocol, registerPickviewScheme } from './image-protocol'
+import {
+  enableVibrancyFallback,
+  ensureLiquidGlass,
+  isLiquidGlassSupported,
+  updateLiquidGlassAppearance,
+  type GlassAppearance
+} from './liquid-glass'
+import { showImageContextMenu } from './image-actions'
 import { checkForUpdates, openReleasesPage, openUpdateDownload } from './updates'
 import { scanWorkspace } from './workspace'
 
@@ -20,6 +28,9 @@ const initialWorkspace =
   ''
 
 function createWindow(): void {
+  const liquidGlass = isLiquidGlassSupported()
+  const initialAppearance: GlassAppearance = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+
   mainWindow = new BrowserWindow({
     width: 1320,
     height: 860,
@@ -30,8 +41,9 @@ function createWindow(): void {
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: process.platform === 'darwin' ? { x: 17, y: 18 } : undefined,
     transparent: process.platform === 'darwin',
-    vibrancy: process.platform === 'darwin' ? 'under-window' : undefined,
-    visualEffectState: process.platform === 'darwin' ? 'active' : undefined,
+    vibrancy: process.platform === 'darwin' && !liquidGlass ? 'under-window' : undefined,
+    visualEffectState:
+      process.platform === 'darwin' && !liquidGlass ? 'active' : undefined,
     backgroundColor: process.platform === 'darwin' ? '#00000000' : '#111214',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -40,12 +52,19 @@ function createWindow(): void {
       nodeIntegration: false,
       additionalArguments: [
         `--pickview-workspace=${initialWorkspace}`,
-        `--pickview-version=${app.getVersion()}`
+        `--pickview-version=${app.getVersion()}`,
+        `--pickview-liquid-glass=${liquidGlass ? '1' : '0'}`
       ]
     }
   })
 
-  mainWindow.on('ready-to-show', () => mainWindow?.show())
+  const window = mainWindow
+  window.on('ready-to-show', () => {
+    if (liquidGlass && !ensureLiquidGlass(window, initialAppearance)) {
+      enableVibrancyFallback(window)
+    }
+    window.show()
+  })
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -176,6 +195,12 @@ ipcMain.handle('shell:reveal', async (_event, path: unknown) => {
   shell.showItemInFolder(path)
 })
 
+ipcMain.handle('image:context-menu', async (event, path: unknown) => {
+  if (typeof path !== 'string' || !path || !mainWindow) return
+  if (event.sender !== mainWindow.webContents) return
+  await showImageContextMenu(mainWindow, path)
+})
+
 ipcMain.handle('app:uninstall', async () => {
   if (process.platform !== 'win32') throw new Error('仅 Windows 支持应用内卸载')
   if (!mainWindow) return
@@ -218,6 +243,14 @@ ipcMain.handle('app:uninstall', async () => {
 
   spawn(uninstallerPath, [], { detached: true, stdio: 'ignore' }).unref()
   setTimeout(() => app.quit(), 300)
+})
+
+ipcMain.on('window:appearance', (event, appearance: unknown) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) return
+  if (appearance !== 'light' && appearance !== 'dark') return
+  if (!updateLiquidGlassAppearance(mainWindow, appearance)) {
+    enableVibrancyFallback(mainWindow)
+  }
 })
 
 ipcMain.handle('updates:check', async (_event, automatic: unknown) =>
